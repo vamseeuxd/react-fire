@@ -17,9 +17,13 @@ import {
   InputAdornment,
   Chip,
   ButtonGroup,
-  Fade
+  Fade,
+  Switch,
+  FormControlLabel,
+  Divider,
+  Collapse
 } from '@mui/material';
-import { Add, AttachMoney, TrendingUp, TrendingDown, Category, Description, Event, Payment } from '@mui/icons-material';
+import { Add, AttachMoney, TrendingUp, TrendingDown, Category, Description, Event, Payment, Repeat } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
@@ -34,6 +38,13 @@ const TransactionForm = ({ onTransactionAdded }) => {
   const [transactionTypes, setTransactionTypes] = useState([]);
   const [selectedType, setSelectedType] = useState('');
   
+  // Repetitive transaction states
+  const [isRepeating, setIsRepeating] = useState(false);
+  const [frequency, setFrequency] = useState('monthly');
+  const [endCondition, setEndCondition] = useState('never');
+  const [endDate, setEndDate] = useState(null);
+  const [occurrences, setOccurrences] = useState(12);
+  
   // Fetch transaction types from Firestore
   useEffect(() => {
     const q = query(collection(db, 'transactionTypes'));
@@ -47,34 +58,91 @@ const TransactionForm = ({ onTransactionAdded }) => {
     return unsubscribe;
   }, []);
 
+  const generateRecurringTransactions = (baseTransaction) => {
+    const transactions = [];
+    let currentDate = dayjs(baseTransaction.paymentDate);
+    let count = 0;
+    const maxTransactions = endCondition === 'occurrences' ? occurrences : 60; // Max 5 years
+    
+    while (count < maxTransactions) {
+      if (endCondition === 'date' && endDate && currentDate.isAfter(endDate)) break;
+      
+      const transactionDate = currentDate.toDate();
+      transactions.push({
+        ...baseTransaction,
+        date: transactionDate,
+        month: transactionDate.getMonth() + 1,
+        year: transactionDate.getFullYear(),
+        recurringIndex: count
+      });
+      
+      // Calculate next date based on frequency
+      switch (frequency) {
+        case 'daily': currentDate = currentDate.add(1, 'day'); break;
+        case 'weekly': currentDate = currentDate.add(1, 'week'); break;
+        case 'monthly': currentDate = currentDate.add(1, 'month'); break;
+        case 'yearly': currentDate = currentDate.add(1, 'year'); break;
+        default: currentDate = currentDate.add(1, 'month');
+      }
+      
+      count++;
+      if (endCondition === 'never' && count >= 12) break; // Default to 12 for 'never'
+    }
+    
+    return transactions;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!amount || !description) return;
 
     setLoading(true);
     try {
-      // Find the selected transaction type if any
       const typeDetails = selectedType ? 
         transactionTypes.find(t => t.id === selectedType) : null;
       
-      await addDoc(collection(db, 'transactions'), {
+      const baseTransaction = {
         amount: parseFloat(amount),
         description,
-        type, // Main category (income/expense)
-        typeId: selectedType || null, // Reference to custom type
-        typeName: typeDetails?.name || null, // Store the name for easier querying
-        date: new Date(),
+        type,
+        typeId: selectedType || null,
+        typeName: typeDetails?.name || null,
         dueDate: dueDate ? dueDate.toDate() : null,
         paymentDate: paymentDate ? paymentDate.toDate() : new Date(),
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear()
-      });
+        isRepeating,
+        frequency: isRepeating ? frequency : null,
+        endCondition: isRepeating ? endCondition : null,
+        endDate: isRepeating && endDate ? endDate.toDate() : null,
+        occurrences: isRepeating ? occurrences : null,
+        createdAt: new Date()
+      };
+
+      if (isRepeating) {
+        // Create recurring transactions
+        const transactions = generateRecurringTransactions(baseTransaction);
+        for (const transaction of transactions) {
+          await addDoc(collection(db, 'transactions'), transaction);
+        }
+      } else {
+        // Single transaction
+        await addDoc(collection(db, 'transactions'), {
+          ...baseTransaction,
+          date: new Date(),
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear()
+        });
+      }
       
       setAmount('');
       setDescription('');
       setDueDate(null);
       setPaymentDate(dayjs());
       setSelectedType('');
+      setIsRepeating(false);
+      setFrequency('monthly');
+      setEndCondition('never');
+      setEndDate(null);
+      setOccurrences(12);
       onTransactionAdded();
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -249,6 +317,88 @@ const TransactionForm = ({ onTransactionAdded }) => {
                     }}
                   />
                 </Grid>
+                
+                <Grid item xs={12}>
+                  <Divider sx={{ my: 2 }} />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={isRepeating}
+                        onChange={(e) => setIsRepeating(e.target.checked)}
+                        color="primary"
+                      />
+                    }
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Repeat color="primary" />
+                        <Typography>Make this a recurring transaction</Typography>
+                      </Box>
+                    }
+                  />
+                </Grid>
+                
+                <Collapse in={isRepeating}>
+                  <Grid container spacing={3} sx={{ mt: 1 }}>
+                    <Grid item xs={12} md={4}>
+                      <FormControl fullWidth>
+                        <InputLabel>Frequency</InputLabel>
+                        <Select
+                          value={frequency}
+                          onChange={(e) => setFrequency(e.target.value)}
+                          label="Frequency"
+                        >
+                          <MenuItem value="daily">Daily</MenuItem>
+                          <MenuItem value="weekly">Weekly</MenuItem>
+                          <MenuItem value="monthly">Monthly</MenuItem>
+                          <MenuItem value="yearly">Yearly</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    
+                    <Grid item xs={12} md={4}>
+                      <FormControl fullWidth>
+                        <InputLabel>End Condition</InputLabel>
+                        <Select
+                          value={endCondition}
+                          onChange={(e) => setEndCondition(e.target.value)}
+                          label="End Condition"
+                        >
+                          <MenuItem value="never">Never (12 occurrences)</MenuItem>
+                          <MenuItem value="occurrences">After specific occurrences</MenuItem>
+                          <MenuItem value="date">On specific date</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    
+                    {endCondition === 'occurrences' && (
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Number of Occurrences"
+                          value={occurrences}
+                          onChange={(e) => setOccurrences(parseInt(e.target.value) || 1)}
+                          inputProps={{ min: 1, max: 60 }}
+                        />
+                      </Grid>
+                    )}
+                    
+                    {endCondition === 'date' && (
+                      <Grid item xs={12} md={4}>
+                        <DatePicker
+                          label="End Date"
+                          value={endDate}
+                          onChange={(newValue) => setEndDate(newValue)}
+                          slotProps={{
+                            textField: {
+                              fullWidth: true,
+                            },
+                          }}
+                        />
+                      </Grid>
+                    )}
+                  </Grid>
+                </Collapse>
                 <Grid item xs={12}>
                   <motion.div
                     whileHover={{ scale: 1.02 }}
@@ -269,7 +419,9 @@ const TransactionForm = ({ onTransactionAdded }) => {
                         fontSize: '1.1rem'
                       }}
                     >
-                      {loading ? 'Processing...' : `Add ${type} Transaction`}
+                      {loading ? 'Processing...' : 
+                        isRepeating ? `Create Recurring ${type} Transaction` : `Add ${type} Transaction`
+                      }
                     </Button>
                   </motion.div>
                 </Grid>

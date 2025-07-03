@@ -27,7 +27,9 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Switch,
+  FormControlLabel
 } from '@mui/material';
 import {
   TrendingUp,
@@ -43,7 +45,8 @@ import {
   Payment,
   Warning,
   Delete,
-  Edit
+  Edit,
+  Repeat
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import dayjs from 'dayjs';
@@ -63,9 +66,17 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
     type: 'expense',
     selectedType: '',
     dueDate: null,
-    paymentDate: null
+    paymentDate: null,
+    isRepeating: false,
+    frequency: 'monthly',
+    endCondition: 'never',
+    endDate: null,
+    occurrences: 12
   });
   const [transactionTypes, setTransactionTypes] = useState([]);
+  const [startDate, setStartDate] = useState(dayjs().startOf('month'));
+  const [endDate, setEndDate] = useState(dayjs().endOf('month'));
+  const [useCurrentMonth, setUseCurrentMonth] = useState(true);
   
   // Fetch transaction types from Firestore
   useEffect(() => {
@@ -79,18 +90,22 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
     });
     return unsubscribe;
   }, []);
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  
-  const monthlyTransactions = transactions.filter(
-    t => t.month === currentMonth && t.year === currentYear
-  );
+  const filteredTransactions = transactions.filter(t => {
+    if (useCurrentMonth) {
+      const currentMonth = new Date().getMonth() + 1;
+      const currentYear = new Date().getFullYear();
+      return t.month === currentMonth && t.year === currentYear;
+    } else {
+      const transactionDate = dayjs(t.date?.toDate?.() || t.paymentDate?.toDate?.());
+      return transactionDate.isBetween(startDate, endDate, 'day', '[]');
+    }
+  });
 
-  const totalIncome = monthlyTransactions
+  const totalIncome = filteredTransactions
     .filter(t => t.type === 'income')
     .reduce((sum, t) => sum + t.amount, 0);
 
-  const totalExpenses = monthlyTransactions
+  const totalExpenses = filteredTransactions
     .filter(t => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount, 0);
 
@@ -105,7 +120,12 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
       type: transaction.type,
       selectedType: transaction.typeId || '',
       dueDate: transaction.dueDate ? dayjs(transaction.dueDate.toDate()) : null,
-      paymentDate: transaction.paymentDate ? dayjs(transaction.paymentDate.toDate()) : dayjs()
+      paymentDate: transaction.paymentDate ? dayjs(transaction.paymentDate.toDate()) : dayjs(),
+      isRepeating: transaction.isRepeating || false,
+      frequency: transaction.frequency || 'monthly',
+      endCondition: transaction.endCondition || 'never',
+      endDate: transaction.endDate ? dayjs(transaction.endDate.toDate()) : null,
+      occurrences: transaction.occurrences || 12
     });
     setEditDialogOpen(true);
   };
@@ -126,6 +146,11 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
         typeName: typeDetails?.name || null,
         dueDate: editFormData.dueDate ? editFormData.dueDate.toDate() : null,
         paymentDate: editFormData.paymentDate ? editFormData.paymentDate.toDate() : new Date(),
+        isRepeating: editFormData.isRepeating,
+        frequency: editFormData.isRepeating ? editFormData.frequency : null,
+        endCondition: editFormData.isRepeating ? editFormData.endCondition : null,
+        endDate: editFormData.isRepeating && editFormData.endDate ? editFormData.endDate.toDate() : null,
+        occurrences: editFormData.isRepeating ? editFormData.occurrences : null,
         updatedAt: new Date()
       });
       
@@ -279,7 +304,7 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 600 }}>
                   <Receipt color="primary" />
-                  Recent Transactions ({monthlyTransactions.length})
+                  Recent Transactions ({filteredTransactions.length})
                 </Typography>
                 <Tooltip title={expanded ? 'Collapse' : 'Expand'}>
                   <IconButton onClick={() => setExpanded(!expanded)} color="primary">
@@ -288,13 +313,56 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                 </Tooltip>
               </Box>
               
+              <Box sx={{ mb: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={useCurrentMonth}
+                      onChange={(e) => setUseCurrentMonth(e.target.checked)}
+                      color="primary"
+                    />
+                  }
+                  label="Current Month Only"
+                />
+                {!useCurrentMonth && (
+                  <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid item xs={12} sm={6}>
+                      <DatePicker
+                        label="Start Date"
+                        value={startDate}
+                        onChange={(newValue) => setStartDate(newValue)}
+                        slotProps={{
+                          textField: {
+                            fullWidth: true,
+                            size: "small"
+                          },
+                        }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <DatePicker
+                        label="End Date"
+                        value={endDate}
+                        onChange={(newValue) => setEndDate(newValue)}
+                        slotProps={{
+                          textField: {
+                            fullWidth: true,
+                            size: "small"
+                          },
+                        }}
+                      />
+                    </Grid>
+                  </Grid>
+                )}
+              </Box>
+              
               <Collapse in={expanded}>
                 <Divider sx={{ mb: 2 }} />
-                {monthlyTransactions.length === 0 ? (
+                {filteredTransactions.length === 0 ? (
                   <Box sx={{ textAlign: 'center', py: 6 }}>
                     <Receipt sx={{ fontSize: 60, color: 'text.disabled', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary">
-                      No transactions this month
+                      No transactions found
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Start by adding your first transaction above
@@ -303,7 +371,7 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                 ) : (
                   <List sx={{ p: 0 }}>
                     <AnimatePresence>
-                      {monthlyTransactions.map((transaction, index) => (
+                      {filteredTransactions.map((transaction, index) => (
                         <motion.div
                           key={index}
                           initial={{ opacity: 0, x: -20 }}
@@ -568,6 +636,88 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                   }}
                 />
               </Grid>
+              
+              <Grid item xs={12}>
+                <Divider sx={{ my: 2 }} />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={editFormData.isRepeating}
+                      onChange={(e) => setEditFormData({...editFormData, isRepeating: e.target.checked})}
+                      color="primary"
+                    />
+                  }
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Repeat color="primary" />
+                      <Typography>Recurring Transaction</Typography>
+                    </Box>
+                  }
+                />
+              </Grid>
+              
+              <Collapse in={editFormData.isRepeating}>
+                <Grid container spacing={2} sx={{ mt: 1 }}>
+                  <Grid item xs={12} sm={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>Frequency</InputLabel>
+                      <Select
+                        value={editFormData.frequency}
+                        onChange={(e) => setEditFormData({...editFormData, frequency: e.target.value})}
+                        label="Frequency"
+                      >
+                        <MenuItem value="daily">Daily</MenuItem>
+                        <MenuItem value="weekly">Weekly</MenuItem>
+                        <MenuItem value="monthly">Monthly</MenuItem>
+                        <MenuItem value="yearly">Yearly</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  
+                  <Grid item xs={12} sm={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>End Condition</InputLabel>
+                      <Select
+                        value={editFormData.endCondition}
+                        onChange={(e) => setEditFormData({...editFormData, endCondition: e.target.value})}
+                        label="End Condition"
+                      >
+                        <MenuItem value="never">Never (12 occurrences)</MenuItem>
+                        <MenuItem value="occurrences">After specific occurrences</MenuItem>
+                        <MenuItem value="date">On specific date</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  
+                  {editFormData.endCondition === 'occurrences' && (
+                    <Grid item xs={12} sm={4}>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        label="Occurrences"
+                        value={editFormData.occurrences}
+                        onChange={(e) => setEditFormData({...editFormData, occurrences: parseInt(e.target.value) || 1})}
+                        inputProps={{ min: 1, max: 60 }}
+                      />
+                    </Grid>
+                  )}
+                  
+                  {editFormData.endCondition === 'date' && (
+                    <Grid item xs={12} sm={4}>
+                      <DatePicker
+                        label="End Date"
+                        value={editFormData.endDate}
+                        onChange={(newValue) => setEditFormData({...editFormData, endDate: newValue})}
+                        slotProps={{
+                          textField: {
+                            fullWidth: true,
+                          },
+                        }}
+                      />
+                    </Grid>
+                  )}
+                </Grid>
+              </Collapse>
             </Grid>
           </Box>
         </DialogContent>
