@@ -119,6 +119,15 @@ function App() {
       severity: 'success' 
     });
   };
+  
+  const handleTransactionUpdated = (transaction) => {
+    // Transactions will be updated automatically via onSnapshot
+    setSnackbar({ 
+      open: true, 
+      message: `${transaction.type === 'income' ? 'Income' : 'Expense'} transaction updated successfully!`, 
+      severity: 'success' 
+    });
+  };
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -173,7 +182,8 @@ function App() {
           <TransactionTypeManager />
           <TransactionList 
             transactions={transactions} 
-            onTransactionDeleted={handleTransactionDeleted} 
+            onTransactionDeleted={handleTransactionDeleted}
+            onTransactionUpdated={handleTransactionUpdated} 
           />
         </Container>
 

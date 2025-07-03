@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Card,
   CardContent,
@@ -22,7 +22,12 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Button
+  Button,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import {
   TrendingUp,
@@ -37,16 +42,43 @@ import {
   Event,
   Payment,
   Warning,
-  Delete
+  Delete,
+  Edit
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
-import { deleteDoc, doc } from 'firebase/firestore';
+import dayjs from 'dayjs';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { deleteDoc, doc, updateDoc, collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 
-const TransactionList = ({ transactions, onTransactionDeleted }) => {
+const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpdated }) => {
   const [expanded, setExpanded] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [transactionToDelete, setTransactionToDelete] = useState(null);
+  const [transactionToEdit, setTransactionToEdit] = useState(null);
+  const [editFormData, setEditFormData] = useState({
+    amount: '',
+    description: '',
+    type: 'expense',
+    selectedType: '',
+    dueDate: null,
+    paymentDate: null
+  });
+  const [transactionTypes, setTransactionTypes] = useState([]);
+  
+  // Fetch transaction types from Firestore
+  useEffect(() => {
+    const q = query(collection(db, 'transactionTypes'));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const typesData = [];
+      querySnapshot.forEach((doc) => {
+        typesData.push({ id: doc.id, ...doc.data() });
+      });
+      setTransactionTypes(typesData);
+    });
+    return unsubscribe;
+  }, []);
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
   
@@ -65,6 +97,48 @@ const TransactionList = ({ transactions, onTransactionDeleted }) => {
   const balance = totalIncome - totalExpenses;
   const savingsRate = totalIncome > 0 ? ((balance / totalIncome) * 100) : 0;
 
+  const handleOpenEditDialog = (transaction) => {
+    setTransactionToEdit(transaction);
+    setEditFormData({
+      amount: transaction.amount,
+      description: transaction.description,
+      type: transaction.type,
+      selectedType: transaction.typeId || '',
+      dueDate: transaction.dueDate ? dayjs(transaction.dueDate.toDate()) : null,
+      paymentDate: transaction.paymentDate ? dayjs(transaction.paymentDate.toDate()) : dayjs()
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleUpdateTransaction = async () => {
+    if (!transactionToEdit || !editFormData.amount || !editFormData.description) return;
+    
+    try {
+      // Find the selected transaction type if any
+      const typeDetails = editFormData.selectedType ? 
+        transactionTypes.find(t => t.id === editFormData.selectedType) : null;
+      
+      await updateDoc(doc(db, 'transactions', transactionToEdit.id), {
+        amount: parseFloat(editFormData.amount),
+        description: editFormData.description,
+        type: editFormData.type,
+        typeId: editFormData.selectedType || null,
+        typeName: typeDetails?.name || null,
+        dueDate: editFormData.dueDate ? editFormData.dueDate.toDate() : null,
+        paymentDate: editFormData.paymentDate ? editFormData.paymentDate.toDate() : new Date(),
+        updatedAt: new Date()
+      });
+      
+      setEditDialogOpen(false);
+      setTransactionToEdit(null);
+      if (onTransactionUpdated) {
+        onTransactionUpdated(transactionToEdit);
+      }
+    } catch (error) {
+      console.error('Error updating transaction:', error);
+    }
+  };
+  
   const handleDeleteTransaction = async () => {
     if (transactionToDelete) {
       try {
@@ -300,21 +374,37 @@ const TransactionList = ({ transactions, onTransactionDeleted }) => {
                                 </Box>
                               }
                             />
-                            <Tooltip title="Delete Transaction">
-                              <IconButton 
-                                edge="end" 
-                                aria-label="delete"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setTransactionToDelete(transaction);
-                                  setDeleteDialogOpen(true);
-                                }}
-                                sx={{ ml: 1 }}
-                                color="error"
-                              >
-                                <Delete fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
+                            <Box>
+                              <Tooltip title="Edit Transaction">
+                                <IconButton 
+                                  edge="end" 
+                                  aria-label="edit"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenEditDialog(transaction);
+                                  }}
+                                  sx={{ ml: 1 }}
+                                  color="primary"
+                                >
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete Transaction">
+                                <IconButton 
+                                  edge="end" 
+                                  aria-label="delete"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTransactionToDelete(transaction);
+                                    setDeleteDialogOpen(true);
+                                  }}
+                                  sx={{ ml: 1 }}
+                                  color="error"
+                                >
+                                  <Delete fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
                           </ListItem>
                         </motion.div>
                       ))}
@@ -368,6 +458,135 @@ const TransactionList = ({ transactions, onTransactionDeleted }) => {
             sx={{ fontWeight: 600 }}
           >
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Edit Transaction Dialog */}
+      <Dialog
+        open={editDialogOpen}
+        onClose={() => setEditDialogOpen(false)}
+        aria-labelledby="edit-dialog-title"
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+          }
+        }}
+      >
+        <DialogTitle id="edit-dialog-title" sx={{ fontWeight: 600 }}>
+          Edit Transaction
+        </DialogTitle>
+        <DialogContent>
+          <Box component="form" sx={{ mt: 1 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Amount"
+                  type="number"
+                  value={editFormData.amount}
+                  onChange={(e) => setEditFormData({...editFormData, amount: e.target.value})}
+                  required
+                  margin="normal"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+                  <Button
+                    variant={editFormData.type === 'expense' ? 'contained' : 'outlined'}
+                    color="error"
+                    onClick={() => setEditFormData({...editFormData, type: 'expense'})}
+                    fullWidth
+                  >
+                    Expense
+                  </Button>
+                  <Button
+                    variant={editFormData.type === 'income' ? 'contained' : 'outlined'}
+                    color="success"
+                    onClick={() => setEditFormData({...editFormData, type: 'income'})}
+                    fullWidth
+                  >
+                    Income
+                  </Button>
+                </Box>
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Description"
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({...editFormData, description: e.target.value})}
+                  required
+                  margin="normal"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth margin="normal">
+                  <InputLabel id="edit-type-label">Transaction Type</InputLabel>
+                  <Select
+                    labelId="edit-type-label"
+                    value={editFormData.selectedType}
+                    onChange={(e) => setEditFormData({...editFormData, selectedType: e.target.value})}
+                    label="Transaction Type"
+                  >
+                    <MenuItem value=""><em>None</em></MenuItem>
+                    {transactionTypes
+                      .filter(t => t.category === editFormData.type)
+                      .map((t) => (
+                        <MenuItem key={t.id} value={t.id}>{t.name}</MenuItem>
+                      ))
+                    }
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <DatePicker
+                  label="Payment Date"
+                  value={editFormData.paymentDate}
+                  onChange={(newValue) => setEditFormData({...editFormData, paymentDate: newValue})}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      margin: "normal"
+                    },
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <DatePicker
+                  label="Due Date (Optional)"
+                  value={editFormData.dueDate}
+                  onChange={(newValue) => setEditFormData({...editFormData, dueDate: newValue})}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      margin: "normal"
+                    },
+                  }}
+                />
+              </Grid>
+            </Grid>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button 
+            onClick={() => setEditDialogOpen(false)} 
+            variant="outlined"
+            sx={{ fontWeight: 600 }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleUpdateTransaction} 
+            color="primary" 
+            variant="contained"
+            startIcon={<Edit />}
+            sx={{ fontWeight: 600 }}
+          >
+            Update
           </Button>
         </DialogActions>
       </Dialog>
