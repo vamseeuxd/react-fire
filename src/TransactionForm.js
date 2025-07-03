@@ -14,12 +14,9 @@ import {
   Typography,
   Grid,
   InputAdornment,
-  Snackbar,
-  Alert,
   Chip,
   ButtonGroup,
-  Fade,
-  Slide
+  Fade
 } from '@mui/material';
 import { Add, AttachMoney, TrendingUp, TrendingDown, Category, Description, Event, Payment } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -33,7 +30,6 @@ const TransactionForm = ({ onTransactionAdded }) => {
   const [dueDate, setDueDate] = useState(null);
   const [paymentDate, setPaymentDate] = useState(dayjs());
   const [loading, setLoading] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -56,11 +52,9 @@ const TransactionForm = ({ onTransactionAdded }) => {
       setDescription('');
       setDueDate(null);
       setPaymentDate(dayjs());
-      setSnackbar({ open: true, message: 'Transaction added successfully!', severity: 'success' });
       onTransactionAdded();
     } catch (error) {
       console.error('Error adding transaction:', error);
-      setSnackbar({ open: true, message: 'Error adding transaction', severity: 'error' });
     } finally {
       setLoading(false);
     }
@@ -235,21 +229,6 @@ const TransactionForm = ({ onTransactionAdded }) => {
           </CardContent>
         </Card>
       </motion.div>
-      
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        TransitionComponent={Slide}
-      >
-        <Alert 
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ fontWeight: 600 }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </>
   );
 };

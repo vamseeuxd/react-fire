@@ -4,7 +4,7 @@ import { db } from './firebase';
 import TransactionForm from './TransactionForm';
 import TransactionList from './TransactionList';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { Container, Typography, CssBaseline, Box, IconButton, AppBar, Toolbar, Fab, Zoom } from '@mui/material';
+import { Container, Typography, CssBaseline, Box, IconButton, AppBar, Toolbar, Fab, Zoom, Snackbar, Alert } from '@mui/material';
 import { AccountBalance, DarkMode, LightMode, Add } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -79,6 +79,7 @@ function App() {
     return saved ? JSON.parse(saved) : false;
   });
   const [showFab, setShowFab] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   const theme = createAppTheme(darkMode ? 'dark' : 'light');
 
@@ -106,6 +107,16 @@ function App() {
 
   const handleTransactionAdded = () => {
     // Transactions will be updated automatically via onSnapshot
+    setSnackbar({ open: true, message: 'Transaction added successfully!', severity: 'success' });
+  };
+  
+  const handleTransactionDeleted = (transaction) => {
+    // Transactions will be updated automatically via onSnapshot
+    setSnackbar({ 
+      open: true, 
+      message: `${transaction.type === 'income' ? 'Income' : 'Expense'} transaction deleted successfully!`, 
+      severity: 'success' 
+    });
   };
 
   const scrollToTop = () => {
@@ -158,7 +169,10 @@ function App() {
           </motion.div>
           
           <TransactionForm onTransactionAdded={handleTransactionAdded} />
-          <TransactionList transactions={transactions} />
+          <TransactionList 
+            transactions={transactions} 
+            onTransactionDeleted={handleTransactionDeleted} 
+          />
         </Container>
 
         <Zoom in={showFab}>
@@ -176,6 +190,22 @@ function App() {
           </Fab>
         </Zoom>
         </LocalizationProvider>
+        
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={4000}
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert 
+            severity={snackbar.severity}
+            variant="filled"
+            sx={{ fontWeight: 600 }}
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
       </ThemeProvider>
     </ThemeContext.Provider>
   );

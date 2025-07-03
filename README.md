@@ -22,6 +22,7 @@ A React application with Firestore integration for tracking monthly expenses and
 ## Features
 
 - Add income and expense transactions
+- Delete transactions with confirmation
 - View monthly summary with balance calculation
 - Real-time updates using Firestore
 - Simple and clean interface
