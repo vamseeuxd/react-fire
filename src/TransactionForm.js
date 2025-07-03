@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, query, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   Card,
@@ -17,7 +17,6 @@ import {
   InputAdornment,
   Chip,
   ButtonGroup,
-  Fade,
   Switch,
   FormControlLabel,
   Divider,
@@ -32,8 +31,8 @@ const TransactionForm = ({ onTransactionAdded }) => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState('expense');
-  const [dueDate, setDueDate] = useState(null);
-  const [paymentDate, setPaymentDate] = useState(dayjs());
+  const [dueDate, setDueDate] = useState(dayjs());
+  const [paymentDate, setPaymentDate] = useState(null);
   const [loading, setLoading] = useState(false);
   const [transactionTypes, setTransactionTypes] = useState([]);
   const [selectedType, setSelectedType] = useState('');
@@ -60,33 +59,33 @@ const TransactionForm = ({ onTransactionAdded }) => {
 
   const generateRecurringTransactions = (baseTransaction) => {
     const transactions = [];
-    let currentDate = dayjs(baseTransaction.paymentDate);
+    let currentDueDate = dayjs(baseTransaction.dueDate);
     let count = 0;
-    const maxTransactions = endCondition === 'occurrences' ? occurrences : 60; // Max 5 years
+    const maxTransactions = endCondition === 'occurrences' ? occurrences : 60;
     
     while (count < maxTransactions) {
-      if (endCondition === 'date' && endDate && currentDate.isAfter(endDate)) break;
+      if (endCondition === 'date' && endDate && currentDueDate.isAfter(endDate, 'day')) break;
       
-      const transactionDate = currentDate.toDate();
       transactions.push({
         ...baseTransaction,
-        date: transactionDate,
-        month: transactionDate.getMonth() + 1,
-        year: transactionDate.getFullYear(),
+        dueDate: currentDueDate.toDate(),
+        date: currentDueDate.toDate(),
+        month: currentDueDate.month() + 1,
+        year: currentDueDate.year(),
         recurringIndex: count
       });
       
-      // Calculate next date based on frequency
       switch (frequency) {
-        case 'daily': currentDate = currentDate.add(1, 'day'); break;
-        case 'weekly': currentDate = currentDate.add(1, 'week'); break;
-        case 'monthly': currentDate = currentDate.add(1, 'month'); break;
-        case 'yearly': currentDate = currentDate.add(1, 'year'); break;
-        default: currentDate = currentDate.add(1, 'month');
+        case 'daily': currentDueDate = currentDueDate.add(1, 'day'); break;
+        case 'weekly': currentDueDate = currentDueDate.add(1, 'week'); break;
+        case 'monthly': currentDueDate = currentDueDate.add(1, 'month'); break;
+        case 'yearly': currentDueDate = currentDueDate.add(1, 'year'); break;
+        default: currentDueDate = currentDueDate.add(1, 'month');
       }
       
       count++;
-      if (endCondition === 'never' && count >= 12) break; // Default to 12 for 'never'
+      if (endCondition === 'never' && count >= 12) break;
+      if (endCondition === 'date' && endDate && currentDueDate.isAfter(endDate, 'day')) break;
     }
     
     return transactions;
@@ -94,7 +93,7 @@ const TransactionForm = ({ onTransactionAdded }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!amount || !description) return;
+    if (!amount || !description || !dueDate) return;
 
     setLoading(true);
     try {
@@ -107,8 +106,8 @@ const TransactionForm = ({ onTransactionAdded }) => {
         type,
         typeId: selectedType || null,
         typeName: typeDetails?.name || null,
-        dueDate: dueDate ? dueDate.toDate() : null,
-        paymentDate: paymentDate ? paymentDate.toDate() : new Date(),
+        dueDate: dueDate.toDate(),
+        paymentDate: paymentDate ? paymentDate.toDate() : null,
         isRepeating,
         frequency: isRepeating ? frequency : null,
         endCondition: isRepeating ? endCondition : null,
@@ -120,8 +119,20 @@ const TransactionForm = ({ onTransactionAdded }) => {
       if (isRepeating) {
         // Create recurring transactions
         const transactions = generateRecurringTransactions(baseTransaction);
-        for (const transaction of transactions) {
-          await addDoc(collection(db, 'transactions'), transaction);
+        let masterTransactionId = null;
+        
+        for (let i = 0; i < transactions.length; i++) {
+          const transactionRef = await addDoc(collection(db, 'transactions'), {
+            ...transactions[i],
+            isMaster: i === 0,
+            recurringId: masterTransactionId
+          });
+          
+          if (i === 0) {
+            masterTransactionId = transactionRef.id;
+            // Update the first transaction to reference itself as master
+            await updateDoc(transactionRef, { recurringId: masterTransactionId });
+          }
         }
       } else {
         // Single transaction
@@ -135,8 +146,8 @@ const TransactionForm = ({ onTransactionAdded }) => {
       
       setAmount('');
       setDescription('');
-      setDueDate(null);
-      setPaymentDate(dayjs());
+      setDueDate(dayjs());
+      setPaymentDate(null);
       setSelectedType('');
       setIsRepeating(false);
       setFrequency('monthly');
@@ -281,16 +292,17 @@ const TransactionForm = ({ onTransactionAdded }) => {
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <DatePicker
-                    label="Payment Date"
-                    value={paymentDate}
-                    onChange={(newValue) => setPaymentDate(newValue)}
+                    label="Due Date *"
+                    value={dueDate}
+                    onChange={(newValue) => setDueDate(newValue)}
                     slotProps={{
                       textField: {
                         fullWidth: true,
+                        required: true,
                         InputProps: {
                           startAdornment: (
                             <InputAdornment position="start">
-                              <Payment color="primary" />
+                              <Event color="warning" />
                             </InputAdornment>
                           ),
                         },
@@ -300,16 +312,16 @@ const TransactionForm = ({ onTransactionAdded }) => {
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <DatePicker
-                    label="Due Date (Optional)"
-                    value={dueDate}
-                    onChange={(newValue) => setDueDate(newValue)}
+                    label="Payment Date (Optional)"
+                    value={paymentDate}
+                    onChange={(newValue) => setPaymentDate(newValue)}
                     slotProps={{
                       textField: {
                         fullWidth: true,
                         InputProps: {
                           startAdornment: (
                             <InputAdornment position="start">
-                              <Event color="warning" />
+                              <Payment color="primary" />
                             </InputAdornment>
                           ),
                         },

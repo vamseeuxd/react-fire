@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Card,
   CardContent,
@@ -10,7 +10,6 @@ import {
   Chip,
   Box,
   Grid,
-  Paper,
   Divider,
   IconButton,
   Collapse,
@@ -35,7 +34,6 @@ import {
 import {
   TrendingUp,
   TrendingDown,
-  AccountBalance,
   Receipt,
   ExpandMore,
   ExpandLess,
@@ -43,8 +41,6 @@ import {
   Savings,
   ShoppingCart,
   Event,
-  Payment,
-  Warning,
   Delete,
   Edit,
   Repeat,
@@ -54,7 +50,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import dayjs from 'dayjs';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { deleteDoc, doc, updateDoc, collection, query, onSnapshot } from 'firebase/firestore';
+import { deleteDoc, doc, updateDoc, collection, query, onSnapshot, addDoc, where, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 
 const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpdated }) => {
@@ -129,8 +125,8 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
       description: transaction.description,
       type: transaction.type,
       selectedType: transaction.typeId || '',
-      dueDate: transaction.dueDate ? dayjs(transaction.dueDate.toDate()) : null,
-      paymentDate: transaction.paymentDate ? dayjs(transaction.paymentDate.toDate()) : dayjs(),
+      dueDate: transaction.dueDate ? dayjs(transaction.dueDate.toDate()) : dayjs(),
+      paymentDate: transaction.paymentDate ? dayjs(transaction.paymentDate.toDate()) : null,
       isRepeating: transaction.isRepeating || false,
       frequency: transaction.frequency || 'monthly',
       endCondition: transaction.endCondition || 'never',
@@ -140,46 +136,128 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
     setEditDialogOpen(true);
   };
 
+  const generateRecurringTransactions = (baseTransaction) => {
+    const transactions = [];
+    let currentDueDate = dayjs(baseTransaction.dueDate);
+    let count = 0;
+    const maxTransactions = baseTransaction.endCondition === 'occurrences' ? baseTransaction.occurrences : 60;
+    
+    while (count < maxTransactions) {
+      if (baseTransaction.endCondition === 'date' && baseTransaction.endDate && currentDueDate.isAfter(dayjs(baseTransaction.endDate), 'day')) break;
+      
+      transactions.push({
+        ...baseTransaction,
+        dueDate: currentDueDate.toDate(),
+        date: currentDueDate.toDate(),
+        month: currentDueDate.month() + 1,
+        year: currentDueDate.year(),
+        recurringIndex: count
+      });
+      
+      switch (baseTransaction.frequency) {
+        case 'daily': currentDueDate = currentDueDate.add(1, 'day'); break;
+        case 'weekly': currentDueDate = currentDueDate.add(1, 'week'); break;
+        case 'monthly': currentDueDate = currentDueDate.add(1, 'month'); break;
+        case 'yearly': currentDueDate = currentDueDate.add(1, 'year'); break;
+        default: currentDueDate = currentDueDate.add(1, 'month');
+      }
+      
+      count++;
+      if (baseTransaction.endCondition === 'never' && count >= 12) break;
+      if (baseTransaction.endCondition === 'date' && baseTransaction.endDate && currentDueDate.isAfter(dayjs(baseTransaction.endDate), 'day')) break;
+    }
+    
+    return transactions;
+  };
+
   const handleUpdateTransaction = async () => {
-    if (!transactionToEdit || !editFormData.amount || !editFormData.description) return;
+    if (!transactionToEdit || !editFormData.amount || !editFormData.description || !editFormData.dueDate) {
+      console.log('Validation failed:', { transactionToEdit, amount: editFormData.amount, description: editFormData.description, dueDate: editFormData.dueDate });
+      return;
+    }
     
     try {
-      // Find the selected transaction type if any
       const typeDetails = editFormData.selectedType ? 
         transactionTypes.find(t => t.id === editFormData.selectedType) : null;
       
+      const wasRecurring = transactionToEdit.isRepeating;
+      const isNowRecurring = editFormData.isRepeating;
+      const recurringDataChanged = wasRecurring && isNowRecurring && (
+        transactionToEdit.frequency !== editFormData.frequency ||
+        transactionToEdit.endCondition !== editFormData.endCondition ||
+        transactionToEdit.occurrences !== editFormData.occurrences ||
+        (transactionToEdit.endDate?.toMillis?.() || 0) !== (editFormData.endDate?.toDate?.()?.getTime?.() || 0)
+      );
+      
+      if (recurringDataChanged || (!wasRecurring && isNowRecurring)) {
+        // Delete existing recurring transactions with same recurringId or created from this transaction
+        const recurringQuery = query(
+          collection(db, 'transactions'),
+          where('recurringId', '==', transactionToEdit.id)
+        );
+        const recurringSnapshot = await getDocs(recurringQuery);
+        for (const docSnap of recurringSnapshot.docs) {
+          await deleteDoc(docSnap.ref);
+        }
+        
+        // Also delete transactions that were created as part of the original recurring series
+        const originalRecurringQuery = query(
+          collection(db, 'transactions'),
+          where('createdAt', '>=', transactionToEdit.createdAt || new Date(0))
+        );
+        const originalSnapshot = await getDocs(originalRecurringQuery);
+        for (const docSnap of originalSnapshot.docs) {
+          const data = docSnap.data();
+          if (data.description === transactionToEdit.description && 
+              data.amount === transactionToEdit.amount && 
+              data.type === transactionToEdit.type &&
+              docSnap.id !== transactionToEdit.id) {
+            await deleteDoc(docSnap.ref);
+          }
+        }
+        
+        // Generate new recurring transactions
+        const baseTransaction = {
+          amount: parseFloat(editFormData.amount),
+          description: editFormData.description,
+          type: editFormData.type,
+          typeId: editFormData.selectedType || null,
+          typeName: typeDetails?.name || null,
+          dueDate: editFormData.dueDate ? editFormData.dueDate.toDate() : null,
+          paymentDate: editFormData.paymentDate ? editFormData.paymentDate.toDate() : new Date(),
+          isRepeating: true,
+          frequency: editFormData.frequency,
+          endCondition: editFormData.endCondition,
+          endDate: editFormData.endDate ? editFormData.endDate.toDate() : null,
+          occurrences: editFormData.occurrences,
+          recurringId: transactionToEdit.id,
+          createdAt: new Date()
+        };
+        
+        const newTransactions = generateRecurringTransactions(baseTransaction);
+        for (const transaction of newTransactions) {
+          await addDoc(collection(db, 'transactions'), {
+            ...transaction,
+            recurringId: transactionToEdit.id
+          });
+        }
+      }
+      
+      // Update the original transaction
       await updateDoc(doc(db, 'transactions', transactionToEdit.id), {
         amount: parseFloat(editFormData.amount),
         description: editFormData.description,
         type: editFormData.type,
         typeId: editFormData.selectedType || null,
         typeName: typeDetails?.name || null,
-        dueDate: editFormData.dueDate ? editFormData.dueDate.toDate() : null,
-        paymentDate: editFormData.paymentDate ? editFormData.paymentDate.toDate() : new Date(),
+        dueDate: editFormData.dueDate.toDate(),
+        paymentDate: editFormData.paymentDate ? editFormData.paymentDate.toDate() : null,
         isRepeating: editFormData.isRepeating,
         frequency: editFormData.isRepeating ? editFormData.frequency : null,
         endCondition: editFormData.isRepeating ? editFormData.endCondition : null,
         endDate: editFormData.isRepeating && editFormData.endDate ? editFormData.endDate.toDate() : null,
         occurrences: editFormData.isRepeating ? editFormData.occurrences : null,
         updatedAt: new Date()
-      });
-      
-      setEditDialogOpen(false);
-      setTransactionToEdit(null);
-      
-      // Force a re-render by updating the form data
-      setEditFormData({
-        amount: '',
-        description: '',
-        type: 'expense',
-        selectedType: '',
-        dueDate: null,
-        paymentDate: null,
-        isRepeating: false,
-        frequency: 'monthly',
-        endCondition: 'never',
-        endDate: null,
-        occurrences: 12
       });
       
       if (onTransactionUpdated) {
@@ -193,6 +271,23 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
       }
     } catch (error) {
       console.error('Error updating transaction:', error);
+    } finally {
+      // Always close dialog and reset state
+      setEditDialogOpen(false);
+      setTransactionToEdit(null);
+      setEditFormData({
+        amount: '',
+        description: '',
+        type: 'expense',
+        selectedType: '',
+        dueDate: null,
+        paymentDate: null,
+        isRepeating: false,
+        frequency: 'monthly',
+        endCondition: 'never',
+        endDate: null,
+        occurrences: 12
+      });
     }
   };
   
@@ -482,7 +577,8 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                             borderColor: transaction.dueDate && dayjs(transaction.dueDate.toDate()).isBefore(dayjs(), 'day') 
                               ? 'error.main' : 'divider',
                             borderRadius: 2, 
-                            mb: 1,
+                            mb: 2,
+                            p: 3,
                             background: transaction.dueDate && dayjs(transaction.dueDate.toDate()).isBefore(dayjs(), 'day')
                               ? 'linear-gradient(135deg, rgba(244, 67, 54, 0.2), rgba(255, 87, 34, 0.2))'
                               : transaction.type === 'income' 
@@ -511,96 +607,100 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                                 </Avatar>
                               </Box>
                             </ListItemIcon>
-                            <ListItemText
-                              primary={
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-                                  <Box>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                        {transaction.description}
-                                      </Typography>
-                                      {transaction.isRepeating && (
-                                        <Repeat sx={{ fontSize: 16, color: 'primary.main' }} />
-                                      )}
-                                    </Box>
-                                    <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
-                                      {transaction.typeName && (
-                                        <Chip 
-                                          label={transaction.typeName}
-                                          size="small"
-                                          variant="outlined"
-                                          color={transaction.type === 'income' ? 'success' : 'error'}
-                                        />
-                                      )}
-                                      {transaction.isRepeating && (
-                                        <Chip 
-                                          label={`${transaction.frequency} recurring`}
-                                          size="small"
-                                          variant="outlined"
-                                          color="primary"
-                                          icon={<Repeat />}
-                                        />
-                                      )}
-                                    </Box>
-                                  </Box>
-                                  <Chip 
-                                    label={`${transaction.type === 'income' ? '+' : '-'}$${transaction.amount.toFixed(2)}`}
-                                    color={transaction.type === 'income' ? 'success' : 'error'}
-                                    variant="filled"
-                                    sx={{ fontWeight: 600, fontSize: '0.9rem' }}
-                                  />
+                            <Box sx={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <Box sx={{ flex: 1, mr: 2 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                  <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1.1rem' }}>
+                                    {transaction.description}
+                                  </Typography>
+                                  {transaction.isRepeating && (
+                                    <Repeat sx={{ fontSize: 20, color: 'primary.main' }} />
+                                  )}
                                 </Box>
-                              }
-                              secondary={
+                                
+                                <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                                  {transaction.typeName && (
+                                    <Chip 
+                                      label={transaction.typeName}
+                                      size="small"
+                                      variant="outlined"
+                                      color={transaction.type === 'income' ? 'success' : 'error'}
+                                    />
+                                  )}
+                                  {transaction.isRepeating && (
+                                    <Chip 
+                                      label={`${transaction.frequency} recurring`}
+                                      size="small"
+                                      variant="outlined"
+                                      color="primary"
+                                      icon={<Repeat />}
+                                    />
+                                  )}
+                                </Box>
                                 <Box>
                                   {transaction.dueDate ? (
-                                    <Typography variant="caption" color="warning.main" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                      <Event sx={{ fontSize: 12 }} />
+                                    <Typography variant="body2" color="warning.main" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                      <Event sx={{ fontSize: 16 }} />
                                       Due: {transaction.dueDate.toDate?.()?.toLocaleDateString()}
                                     </Typography>
                                   ) : (
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, display: 'block' }}>
+                                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, display: 'block', mb: 0.5 }}>
                                       Payment: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Date not available'}
                                     </Typography>
                                   )}
-                                  {transaction.dueDate && (
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 400, display: 'block', mt: 0.5 }}>
-                                      Paid: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Not paid'}
+                                  {transaction.dueDate && transaction.paymentDate && (
+                                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 400, display: 'block' }}>
+                                      Paid: {transaction.paymentDate.toDate?.()?.toLocaleDateString()}
                                     </Typography>
                                   )}
                                 </Box>
-                              }
-                            />
-                            <Box>
-                              <Tooltip title="Edit Transaction">
-                                <IconButton 
-                                  edge="end" 
-                                  aria-label="edit"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenEditDialog(transaction);
-                                  }}
-                                  sx={{ ml: 1 }}
-                                  color="primary"
-                                >
-                                  <Edit fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Delete Transaction">
-                                <IconButton 
-                                  edge="end" 
-                                  aria-label="delete"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setTransactionToDelete(transaction);
-                                    setDeleteDialogOpen(true);
-                                  }}
-                                  sx={{ ml: 1 }}
-                                  color="error"
-                                >
-                                  <Delete fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
+                              </Box>
+                              
+                              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                                <Chip 
+                                  label={`${transaction.type === 'income' ? '+' : '-'}$${transaction.amount.toFixed(2)}`}
+                                  color={transaction.type === 'income' ? 'success' : 'error'}
+                                  variant="filled"
+                                  sx={{ fontWeight: 700, fontSize: '1rem', minWidth: '100px' }}
+                                />
+                                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                  <Tooltip title="Edit Transaction">
+                                    <IconButton 
+                                      aria-label="edit"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenEditDialog(transaction);
+                                      }}
+                                      color="primary"
+                                      size="medium"
+                                      sx={{ 
+                                        bgcolor: 'rgba(25, 118, 210, 0.1)',
+                                        '&:hover': { bgcolor: 'rgba(25, 118, 210, 0.2)' }
+                                      }}
+                                    >
+                                      <Edit sx={{ fontSize: 20 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Delete Transaction">
+                                    <IconButton 
+                                      aria-label="delete"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setTransactionToDelete(transaction);
+                                        setDeleteDialogOpen(true);
+                                      }}
+                                      color="error"
+                                      size="medium"
+                                      sx={{ 
+                                        bgcolor: 'rgba(211, 47, 47, 0.1)',
+                                        '&:hover': { bgcolor: 'rgba(211, 47, 47, 0.2)' }
+                                      }}
+                                    >
+                                      <Delete sx={{ fontSize: 20 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              </Box>
                             </Box>
                           </ListItem>
                         </motion.div>
@@ -741,22 +841,23 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
               </Grid>
               <Grid item xs={12} sm={6}>
                 <DatePicker
-                  label="Payment Date"
-                  value={editFormData.paymentDate}
-                  onChange={(newValue) => setEditFormData({...editFormData, paymentDate: newValue})}
+                  label="Due Date *"
+                  value={editFormData.dueDate}
+                  onChange={(newValue) => setEditFormData({...editFormData, dueDate: newValue})}
                   slotProps={{
                     textField: {
                       fullWidth: true,
-                      margin: "normal"
+                      margin: "normal",
+                      required: true
                     },
                   }}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
                 <DatePicker
-                  label="Due Date (Optional)"
-                  value={editFormData.dueDate}
-                  onChange={(newValue) => setEditFormData({...editFormData, dueDate: newValue})}
+                  label="Payment Date (Optional)"
+                  value={editFormData.paymentDate}
+                  onChange={(newValue) => setEditFormData({...editFormData, paymentDate: newValue})}
                   slotProps={{
                     textField: {
                       fullWidth: true,
