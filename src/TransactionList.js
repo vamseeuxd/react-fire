@@ -29,7 +29,8 @@ import {
   Select,
   MenuItem,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  Checkbox
 } from '@mui/material';
 import {
   TrendingUp,
@@ -46,7 +47,9 @@ import {
   Warning,
   Delete,
   Edit,
-  Repeat
+  Repeat,
+  SelectAll,
+  DeleteSweep
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import dayjs from 'dayjs';
@@ -77,6 +80,8 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
   const [startDate, setStartDate] = useState(dayjs().startOf('month'));
   const [endDate, setEndDate] = useState(dayjs().endOf('month'));
   const [useCurrentMonth, setUseCurrentMonth] = useState(true);
+  const [selectedTransactions, setSelectedTransactions] = useState([]);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   
   // Fetch transaction types from Firestore
   useEffect(() => {
@@ -99,6 +104,11 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
       const transactionDate = dayjs(t.date?.toDate?.() || t.paymentDate?.toDate?.());
       return transactionDate.isBetween(startDate, endDate, 'day', '[]');
     }
+  }).sort((a, b) => {
+    // Sort by due date first (if exists), then by payment/transaction date
+    const aDate = a.dueDate?.toDate?.() || a.paymentDate?.toDate?.() || a.date?.toDate?.();
+    const bDate = b.dueDate?.toDate?.() || b.paymentDate?.toDate?.() || b.date?.toDate?.();
+    return new Date(bDate) - new Date(aDate);
   });
 
   const totalIncome = filteredTransactions
@@ -156,8 +166,30 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
       
       setEditDialogOpen(false);
       setTransactionToEdit(null);
+      
+      // Force a re-render by updating the form data
+      setEditFormData({
+        amount: '',
+        description: '',
+        type: 'expense',
+        selectedType: '',
+        dueDate: null,
+        paymentDate: null,
+        isRepeating: false,
+        frequency: 'monthly',
+        endCondition: 'never',
+        endDate: null,
+        occurrences: 12
+      });
+      
       if (onTransactionUpdated) {
-        onTransactionUpdated(transactionToEdit);
+        onTransactionUpdated({
+          ...transactionToEdit,
+          ...editFormData,
+          amount: parseFloat(editFormData.amount),
+          isRepeating: editFormData.isRepeating,
+          frequency: editFormData.isRepeating ? editFormData.frequency : null
+        });
       }
     } catch (error) {
       console.error('Error updating transaction:', error);
@@ -177,6 +209,40 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
         console.error('Error deleting transaction:', error);
       }
     }
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      for (const transactionId of selectedTransactions) {
+        await deleteDoc(doc(db, 'transactions', transactionId));
+      }
+      setBulkDeleteDialogOpen(false);
+      setSelectedTransactions([]);
+      if (onTransactionDeleted) {
+        selectedTransactions.forEach(id => {
+          const transaction = filteredTransactions.find(t => t.id === id);
+          if (transaction) onTransactionDeleted(transaction);
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting transactions:', error);
+    }
+  };
+
+  const handleSelectTransaction = (transactionId) => {
+    setSelectedTransactions(prev => 
+      prev.includes(transactionId) 
+        ? prev.filter(id => id !== transactionId)
+        : [...prev, transactionId]
+    );
+  };
+
+  const handleSelectAll = () => {
+    setSelectedTransactions(
+      selectedTransactions.length === filteredTransactions.length 
+        ? [] 
+        : filteredTransactions.map(t => t.id)
+    );
   };
 
   return (
@@ -302,15 +368,46 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
           }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 600 }}>
-                  <Receipt color="primary" />
-                  Recent Transactions ({filteredTransactions.length})
-                </Typography>
-                <Tooltip title={expanded ? 'Collapse' : 'Expand'}>
-                  <IconButton onClick={() => setExpanded(!expanded)} color="primary">
-                    {expanded ? <ExpandLess /> : <ExpandMore />}
-                  </IconButton>
-                </Tooltip>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 600 }}>
+                    <Receipt color="primary" />
+                    Recent Transactions ({filteredTransactions.length})
+                  </Typography>
+                  {selectedTransactions.length > 0 && (
+                    <Chip 
+                      label={`${selectedTransactions.length} selected`}
+                      color="primary"
+                      size="small"
+                    />
+                  )}
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {filteredTransactions.length > 0 && (
+                    <>
+                      <Tooltip title="Select All">
+                        <IconButton onClick={handleSelectAll} color="primary" size="small">
+                          <SelectAll />
+                        </IconButton>
+                      </Tooltip>
+                      {selectedTransactions.length > 0 && (
+                        <Tooltip title="Delete Selected">
+                          <IconButton 
+                            onClick={() => setBulkDeleteDialogOpen(true)} 
+                            color="error" 
+                            size="small"
+                          >
+                            <DeleteSweep />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </>
+                  )}
+                  <Tooltip title={expanded ? 'Collapse' : 'Expand'}>
+                    <IconButton onClick={() => setExpanded(!expanded)} color="primary">
+                      {expanded ? <ExpandLess /> : <ExpandMore />}
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </Box>
               
               <Box sx={{ mb: 2 }}>
@@ -373,7 +470,7 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                     <AnimatePresence>
                       {filteredTransactions.map((transaction, index) => (
                         <motion.div
-                          key={index}
+                          key={`${transaction.id}-${transaction.updatedAt?.toMillis?.() || transaction.date?.toMillis?.()}`}
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: 20 }}
@@ -382,12 +479,15 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                         >
                           <ListItem sx={{ 
                             border: 1, 
-                            borderColor: 'divider', 
+                            borderColor: transaction.dueDate && dayjs(transaction.dueDate.toDate()).isBefore(dayjs(), 'day') 
+                              ? 'error.main' : 'divider',
                             borderRadius: 2, 
                             mb: 1,
-                            background: transaction.type === 'income' 
-                              ? 'linear-gradient(135deg, rgba(76, 175, 80, 0.1), rgba(139, 195, 74, 0.1))'
-                              : 'linear-gradient(135deg, rgba(244, 67, 54, 0.1), rgba(255, 87, 34, 0.1))',
+                            background: transaction.dueDate && dayjs(transaction.dueDate.toDate()).isBefore(dayjs(), 'day')
+                              ? 'linear-gradient(135deg, rgba(244, 67, 54, 0.2), rgba(255, 87, 34, 0.2))'
+                              : transaction.type === 'income' 
+                                ? 'linear-gradient(135deg, rgba(76, 175, 80, 0.1), rgba(139, 195, 74, 0.1))'
+                                : 'linear-gradient(135deg, rgba(244, 67, 54, 0.1), rgba(255, 87, 34, 0.1))',
                             transition: 'all 0.3s ease',
                             '&:hover': {
                               transform: 'translateY(-2px)',
@@ -395,30 +495,53 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                             }
                           }}>
                             <ListItemIcon>
-                              <Avatar sx={{ 
-                                bgcolor: transaction.type === 'income' ? 'success.main' : 'error.main',
-                                width: 40,
-                                height: 40
-                              }}>
-                                {transaction.type === 'income' ? <TrendingUp /> : <TrendingDown />}
-                              </Avatar>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Checkbox
+                                  checked={selectedTransactions.includes(transaction.id)}
+                                  onChange={() => handleSelectTransaction(transaction.id)}
+                                  size="small"
+                                  color="primary"
+                                />
+                                <Avatar sx={{ 
+                                  bgcolor: transaction.type === 'income' ? 'success.main' : 'error.main',
+                                  width: 40,
+                                  height: 40
+                                }}>
+                                  {transaction.type === 'income' ? <TrendingUp /> : <TrendingDown />}
+                                </Avatar>
+                              </Box>
                             </ListItemIcon>
                             <ListItemText
                               primary={
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
                                   <Box>
-                                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                      {transaction.description}
-                                    </Typography>
-                                    {transaction.typeName && (
-                                      <Chip 
-                                        label={transaction.typeName}
-                                        size="small"
-                                        variant="outlined"
-                                        color={transaction.type === 'income' ? 'success' : 'error'}
-                                        sx={{ mt: 0.5 }}
-                                      />
-                                    )}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                        {transaction.description}
+                                      </Typography>
+                                      {transaction.isRepeating && (
+                                        <Repeat sx={{ fontSize: 16, color: 'primary.main' }} />
+                                      )}
+                                    </Box>
+                                    <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
+                                      {transaction.typeName && (
+                                        <Chip 
+                                          label={transaction.typeName}
+                                          size="small"
+                                          variant="outlined"
+                                          color={transaction.type === 'income' ? 'success' : 'error'}
+                                        />
+                                      )}
+                                      {transaction.isRepeating && (
+                                        <Chip 
+                                          label={`${transaction.frequency} recurring`}
+                                          size="small"
+                                          variant="outlined"
+                                          color="primary"
+                                          icon={<Repeat />}
+                                        />
+                                      )}
+                                    </Box>
                                   </Box>
                                   <Chip 
                                     label={`${transaction.type === 'income' ? '+' : '-'}$${transaction.amount.toFixed(2)}`}
@@ -430,13 +553,19 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
                               }
                               secondary={
                                 <Box>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, display: 'block' }}>
-                                    Payment: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Date not available'}
-                                  </Typography>
-                                  {transaction.dueDate && (
-                                    <Typography variant="caption" color="warning.main" sx={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                  {transaction.dueDate ? (
+                                    <Typography variant="caption" color="warning.main" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                       <Event sx={{ fontSize: 12 }} />
                                       Due: {transaction.dueDate.toDate?.()?.toLocaleDateString()}
+                                    </Typography>
+                                  ) : (
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, display: 'block' }}>
+                                      Payment: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Date not available'}
+                                    </Typography>
+                                  )}
+                                  {transaction.dueDate && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 400, display: 'block', mt: 0.5 }}>
+                                      Paid: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Not paid'}
                                     </Typography>
                                   )}
                                 </Box>
@@ -737,6 +866,47 @@ const TransactionList = ({ transactions, onTransactionDeleted, onTransactionUpda
             sx={{ fontWeight: 600 }}
           >
             Update
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog
+        open={bulkDeleteDialogOpen}
+        onClose={() => setBulkDeleteDialogOpen(false)}
+        aria-labelledby="bulk-delete-dialog-title"
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+          }
+        }}
+      >
+        <DialogTitle id="bulk-delete-dialog-title" sx={{ fontWeight: 600 }}>
+          Delete Multiple Transactions
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete {selectedTransactions.length} selected transactions?
+            This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button 
+            onClick={() => setBulkDeleteDialogOpen(false)} 
+            variant="outlined"
+            sx={{ fontWeight: 600 }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleBulkDelete} 
+            color="error" 
+            variant="contained"
+            startIcon={<DeleteSweep />}
+            sx={{ fontWeight: 600 }}
+          >
+            Delete {selectedTransactions.length} Transactions
           </Button>
         </DialogActions>
       </Dialog>
