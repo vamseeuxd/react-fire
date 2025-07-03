@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from './firebase';
 import TransactionForm from './TransactionForm';
 import TransactionList from './TransactionList';
+import TransactionTypeManager from './TransactionTypeManager';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { Container, Typography, CssBaseline, Box, IconButton, AppBar, Toolbar, Fab, Zoom, Snackbar, Alert } from '@mui/material';
 import { AccountBalance, DarkMode, LightMode, Add } from '@mui/icons-material';
@@ -169,6 +170,7 @@ function App() {
           </motion.div>
           
           <TransactionForm onTransactionAdded={handleTransactionAdded} />
+          <TransactionTypeManager />
           <TransactionList 
             transactions={transactions} 
             onTransactionDeleted={handleTransactionDeleted} 

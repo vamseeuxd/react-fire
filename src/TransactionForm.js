@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { collection, addDoc } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { collection, addDoc, query, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   Card,
@@ -10,6 +10,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  FormHelperText,
   Box,
   Typography,
   Grid,
@@ -30,6 +31,21 @@ const TransactionForm = ({ onTransactionAdded }) => {
   const [dueDate, setDueDate] = useState(null);
   const [paymentDate, setPaymentDate] = useState(dayjs());
   const [loading, setLoading] = useState(false);
+  const [transactionTypes, setTransactionTypes] = useState([]);
+  const [selectedType, setSelectedType] = useState('');
+  
+  // Fetch transaction types from Firestore
+  useEffect(() => {
+    const q = query(collection(db, 'transactionTypes'));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const typesData = [];
+      querySnapshot.forEach((doc) => {
+        typesData.push({ id: doc.id, ...doc.data() });
+      });
+      setTransactionTypes(typesData);
+    });
+    return unsubscribe;
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,10 +53,16 @@ const TransactionForm = ({ onTransactionAdded }) => {
 
     setLoading(true);
     try {
+      // Find the selected transaction type if any
+      const typeDetails = selectedType ? 
+        transactionTypes.find(t => t.id === selectedType) : null;
+      
       await addDoc(collection(db, 'transactions'), {
         amount: parseFloat(amount),
         description,
-        type,
+        type, // Main category (income/expense)
+        typeId: selectedType || null, // Reference to custom type
+        typeName: typeDetails?.name || null, // Store the name for easier querying
         date: new Date(),
         dueDate: dueDate ? dueDate.toDate() : null,
         paymentDate: paymentDate ? paymentDate.toDate() : new Date(),
@@ -52,6 +74,7 @@ const TransactionForm = ({ onTransactionAdded }) => {
       setDescription('');
       setDueDate(null);
       setPaymentDate(dayjs());
+      setSelectedType('');
       onTransactionAdded();
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -161,6 +184,32 @@ const TransactionForm = ({ onTransactionAdded }) => {
                       ),
                     }}
                   />
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel id="transaction-type-label">Transaction Type</InputLabel>
+                    <Select
+                      labelId="transaction-type-label"
+                      value={selectedType}
+                      onChange={(e) => setSelectedType(e.target.value)}
+                      label="Transaction Type"
+                      startAdornment={
+                        <InputAdornment position="start">
+                          <Category color="primary" />
+                        </InputAdornment>
+                      }
+                    >
+                      <MenuItem value=""><em>None</em></MenuItem>
+                      {transactionTypes
+                        .filter(t => t.category === type) // Only show types matching current income/expense selection
+                        .map((t) => (
+                          <MenuItem key={t.id} value={t.id}>{t.name}</MenuItem>
+                        ))
+                      }
+                    </Select>
+                    <FormHelperText>Select a specific transaction type (optional)</FormHelperText>
+                  </FormControl>
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <DatePicker

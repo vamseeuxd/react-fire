@@ -264,9 +264,20 @@ const TransactionList = ({ transactions, onTransactionDeleted }) => {
                             <ListItemText
                               primary={
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-                                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                    {transaction.description}
-                                  </Typography>
+                                  <Box>
+                                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                      {transaction.description}
+                                    </Typography>
+                                    {transaction.typeName && (
+                                      <Chip 
+                                        label={transaction.typeName}
+                                        size="small"
+                                        variant="outlined"
+                                        color={transaction.type === 'income' ? 'success' : 'error'}
+                                        sx={{ mt: 0.5 }}
+                                      />
+                                    )}
+                                  </Box>
                                   <Chip 
                                     label={`${transaction.type === 'income' ? '+' : '-'}$${transaction.amount.toFixed(2)}`}
                                     color={transaction.type === 'income' ? 'success' : 'error'}
