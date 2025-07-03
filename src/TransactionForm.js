@@ -21,13 +21,17 @@ import {
   Fade,
   Slide
 } from '@mui/material';
-import { Add, AttachMoney, TrendingUp, TrendingDown, Category, Description } from '@mui/icons-material';
+import { Add, AttachMoney, TrendingUp, TrendingDown, Category, Description, Event, Payment } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import dayjs from 'dayjs';
 
 const TransactionForm = ({ onTransactionAdded }) => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState('expense');
+  const [dueDate, setDueDate] = useState(null);
+  const [paymentDate, setPaymentDate] = useState(dayjs());
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
@@ -42,12 +46,16 @@ const TransactionForm = ({ onTransactionAdded }) => {
         description,
         type,
         date: new Date(),
+        dueDate: dueDate ? dueDate.toDate() : null,
+        paymentDate: paymentDate ? paymentDate.toDate() : new Date(),
         month: new Date().getMonth() + 1,
         year: new Date().getFullYear()
       });
       
       setAmount('');
       setDescription('');
+      setDueDate(null);
+      setPaymentDate(dayjs());
       setSnackbar({ open: true, message: 'Transaction added successfully!', severity: 'success' });
       onTransactionAdded();
     } catch (error) {
@@ -157,6 +165,44 @@ const TransactionForm = ({ onTransactionAdded }) => {
                           <Description color="primary" />
                         </InputAdornment>
                       ),
+                    }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <DatePicker
+                    label="Payment Date"
+                    value={paymentDate}
+                    onChange={(newValue) => setPaymentDate(newValue)}
+                    slotProps={{
+                      textField: {
+                        fullWidth: true,
+                        InputProps: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <Payment color="primary" />
+                            </InputAdornment>
+                          ),
+                        },
+                      },
+                    }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <DatePicker
+                    label="Due Date (Optional)"
+                    value={dueDate}
+                    onChange={(newValue) => setDueDate(newValue)}
+                    slotProps={{
+                      textField: {
+                        fullWidth: true,
+                        InputProps: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <Event color="warning" />
+                            </InputAdornment>
+                          ),
+                        },
+                      },
                     }}
                   />
                 </Grid>

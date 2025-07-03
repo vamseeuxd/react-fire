@@ -7,6 +7,8 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { Container, Typography, CssBaseline, Box, IconButton, AppBar, Toolbar, Fab, Zoom } from '@mui/material';
 import { AccountBalance, DarkMode, LightMode, Add } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 
 const ThemeContext = createContext();
 
@@ -113,7 +115,8 @@ function App() {
   return (
     <ThemeContext.Provider value={{ darkMode, setDarkMode }}>
       <ThemeProvider theme={theme}>
-        <CssBaseline />
+        <LocalizationProvider dateAdapter={AdapterDayjs}>
+          <CssBaseline />
         <AppBar position="sticky" elevation={0} sx={{ bgcolor: 'background.paper', backdropFilter: 'blur(20px)' }}>
           <Toolbar>
             <AccountBalance sx={{ mr: 2, color: 'primary.main' }} />
@@ -172,6 +175,7 @@ function App() {
             <Add />
           </Fab>
         </Zoom>
+        </LocalizationProvider>
       </ThemeProvider>
     </ThemeContext.Provider>
   );

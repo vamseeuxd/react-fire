@@ -27,7 +27,10 @@ import {
   ExpandLess,
   Analytics,
   Savings,
-  ShoppingCart
+  ShoppingCart,
+  Event,
+  Payment,
+  Warning
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -246,9 +249,17 @@ const TransactionList = ({ transactions }) => {
                               </Box>
                             }
                             secondary={
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
-                                {transaction.date?.toDate?.()?.toLocaleDateString() || 'Date not available'}
-                              </Typography>
+                              <Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, display: 'block' }}>
+                                  Payment: {transaction.paymentDate?.toDate?.()?.toLocaleDateString() || transaction.date?.toDate?.()?.toLocaleDateString() || 'Date not available'}
+                                </Typography>
+                                {transaction.dueDate && (
+                                  <Typography variant="caption" color="warning.main" sx={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                    <Event sx={{ fontSize: 12 }} />
+                                    Due: {transaction.dueDate.toDate?.()?.toLocaleDateString()}
+                                  </Typography>
+                                )}
+                              </Box>
                             }
                           />
                         </ListItem>
